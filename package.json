@@ -1,0 +1,12 @@
+{
+  "name": "mini-blockchain",
+  "version": "0.1.0",
+  "description": "Day 1: a from-scratch blockchain with a live block explorer. No dependencies.",
+  "main": "blockchain.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "author": "xskriptx",
+  "license": "MIT"
+}

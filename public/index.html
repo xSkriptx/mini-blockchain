@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SK1X Mini Chain Explorer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { --bg:#0b0f17; --card:#141b29; --line:#243049; --text:#e6edf7; --dim:#8b9bb4; --green:#34d399; --red:#f87171; --accent:#60a5fa; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 ui-monospace,Consolas,monospace; }
+  header { display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding:16px 24px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; margin-right:auto; }
+  h1 span { color:var(--accent); }
+  .pill { padding:4px 10px; border-radius:999px; border:1px solid var(--line); color:var(--dim); }
+  .pill.ok { color:var(--green); border-color:var(--green); }
+  .pill.bad { color:var(--red); border-color:var(--red); }
+  button, select { background:var(--card); color:var(--text); border:1px solid var(--line); padding:8px 14px; border-radius:8px; font:inherit; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:wait; }
+  button.primary { background:var(--accent); color:#06101f; border-color:var(--accent); font-weight:700; }
+  #chain { display:flex; gap:16px; padding:24px; overflow-x:auto; align-items:stretch; }
+  .block { flex:0 0 320px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; position:relative; }
+  .block.bad { border-color:var(--red); box-shadow:0 0 0 1px var(--red); }
+  .block.new { animation:pop .5s ease; }
+  .block.pending { border-style:dashed; color:var(--dim); display:flex; align-items:center; justify-content:center; text-align:center; }
+  @keyframes pop { from { transform:scale(.9); opacity:0; } to { transform:none; opacity:1; } }
+  .idx { font-weight:700; color:var(--accent); margin-bottom:6px; }
+  .row { margin:4px 0; word-break:break-all; }
+  .k { color:var(--dim); }
+  .hash { color:var(--green); }
+  .bad .hash { color:var(--red); }
+  .zeros { background:rgba(52,211,153,.25); border-radius:3px; }
+  .block button { margin-top:10px; padding:4px 10px; font-size:12px; }
+  .arrow { align-self:center; color:var(--dim); font-size:20px; flex:0 0 auto; }
+  .spin { display:inline-block; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>SK1X</span> mini chain explorer</h1>
+  <span class="pill" id="diff">difficulty: -</span>
+  <span class="pill" id="valid">chain: -</span>
+  <select id="difficulty" title="Resets the chain">
+    <option>1</option><option>2</option><option>3</option><option selected>4</option><option>5</option>
+  </select>
+  <button id="reset">Reset chain</button>
+  <button id="mine" class="primary">Mine block</button>
+  <button id="auto">Auto-mine: off</button>
+</header>
+<div id="chain"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let chain = [], difficulty = 4, validation = { valid: true }, mining = false, auto = false, freshIndex = -1;
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+
+function render() {
+  $('diff').textContent = 'difficulty: ' + difficulty;
+  const v = $('valid');
+  v.textContent = validation.valid ? 'chain: valid' : `chain: BROKEN at #${validation.index}`;
+  v.className = 'pill ' + (validation.valid ? 'ok' : 'bad');
+
+  const html = chain.map((b, i) => {
+    const bad = !validation.valid && i >= validation.index;
+    const h = esc(b.hash);
+    const hashHtml = `<span class="zeros">${h.slice(0, difficulty)}</span>${h.slice(difficulty)}`;
+    return (i ? '<div class="arrow">&rarr;</div>' : '') + `
+      <div class="block ${bad ? 'bad' : ''} ${i === freshIndex ? 'new' : ''}">
+        <div class="idx">Block #${b.index}</div>
+        <div class="row"><span class="k">time:</span> ${b.index ? new Date(b.timestamp).toLocaleTimeString() : 'genesis'}</div>
+        <div class="row"><span class="k">data:</span> ${esc(typeof b.data === 'string' ? b.data : JSON.stringify(b.data))}</div>
+        <div class="row"><span class="k">nonce:</span> ${b.nonce.toLocaleString()}${b.miningTimeMs != null ? ` <span class="k">(${b.miningTimeMs}ms)</span>` : ''}</div>
+        <div class="row"><span class="k">prev:</span> ${esc(b.previousHash.slice(0, 20))}${b.previousHash.length > 20 ? '...' : ''}</div>
+        <div class="row"><span class="k">hash:</span> <span class="hash">${hashHtml}</span></div>
+        ${i ? `<button onclick="tamper(${i})">Tamper</button>` : ''}
+      </div>`;
+  }).join('');
+  const pending = mining ? '<div class="arrow">&rarr;</div><div class="block pending"><div><span class="spin">&#9881;</span><br>mining block #' + chain.length + '...</div></div>' : '';
+  $('chain').innerHTML = html + pending;
+  $('mine').disabled = mining;
+  $('chain').scrollLeft = $('chain').scrollWidth;
+}
+
+async function load() {
+  const s = await (await fetch('/api/chain')).json();
+  chain = s.chain; difficulty = s.difficulty; validation = s.validation; render();
+}
+
+async function mine() {
+  if (mining) return;
+  await fetch('/api/mine', { method: 'POST', body: JSON.stringify({}) });
+}
+
+async function tamper(i) {
+  await fetch('/api/tamper', { method: 'POST', body: JSON.stringify({ index: i }) });
+}
+
+$('mine').onclick = mine;
+$('reset').onclick = () => fetch('/api/reset', { method: 'POST', body: JSON.stringify({ difficulty: Number($('difficulty').value) }) });
+$('auto').onclick = () => {
+  auto = !auto;
+  $('auto').textContent = 'Auto-mine: ' + (auto ? 'on' : 'off');
+  if (auto) mine();
+};
+
+const es = new EventSource('/api/events');
+es.addEventListener('mining', () => { mining = true; render(); });
+es.addEventListener('block', (e) => {
+  const d = JSON.parse(e.data);
+  mining = false; chain.push(d.block); validation = d.validation; freshIndex = d.block.index; render();
+  if (auto && validation.valid) setTimeout(mine, 600);
+});
+es.addEventListener('state', (e) => {
+  const s = JSON.parse(e.data);
+  chain = s.chain; difficulty = s.difficulty; validation = s.validation; mining = false; freshIndex = -1; render();
+});
+
+load();
+</script>
+</body>
+</html>
